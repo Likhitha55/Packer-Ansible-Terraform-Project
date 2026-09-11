@@ -1,0 +1,265 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for install-softwares
+
+# Use ansible role to 
+# Install sublime
+# Install Jenkins
+# Install Python 3.14 version
+# Install Chrome
+# Install notepad++
+#===============================
+
+# Install sublime
+# https://www.sublimetext.com/docs/linux_repositories.html#dnf
+
+- name: Import Sublime Text GPG key
+  rpm_key:
+    key: https://download.sublimetext.com/sublimehq-rpm-pub.gpg
+    state: present
+- name: Add repository
+  yum_repository:
+   name: sublime-Text
+   description: Sublime Text - x86_64 - Stable
+   baseurl: https://download.sublimetext.com/rpm/stable/x86_64
+   gpgcheck: yes
+   gpgkey: https://download.sublimetext.com/sublimehq-rpm-pub.gpg
+   enabled: yes
+- name: Install Sublime Text
+  dnf:
+    name: sublime-text
+    state: present
+
+
+# Install Jenkins
+
+# installing java - jenkins dependency
+- name: Install Java 21 
+  dnf:
+    name: java-21-amazon-corretto
+    state: present
+- name: Check Java 21 installation
+  command: java --version
+  register: java_version
+
+- name: Display Java version
+  debug:
+    var: java_version.stderr_lines
+
+# JENKINS
+- name: Import Jenkins GPG key
+  rpm_key:
+    key: https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+    state: present
+- name: Add Jenkins yum repository
+  yum_repository:
+    name: jenkins
+    description: Jenkins Stable
+    baseurl: https://pkg.jenkins.io/redhat-stable/
+    gpgcheck: no
+    gpgkey: https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+    enabled: yes
+- name: Install Jenkins
+  dnf:
+    name: jenkins
+    state: present
+    disable_gpg_check: yes 
+- name: Enable and start Jenkins service
+  systemd:
+    name: jenkins
+    enabled: yes
+    state: started
+
+# Install Python 3.14 version
+- name: Install Python dependencies
+  dnf:
+    name:
+      - gcc
+      - make
+      - openssl-devel
+      - bzip2-devel
+      - libffi-devel
+      - zlib-devel
+      - readline-devel
+      - sqlite-devel
+      - wget
+      - tar
+      - xz-devel
+    state: present
+
+- name: Download Python 3.14 source
+  get_url:
+    url: https://www.python.org/ftp/python/3.14.0/Python-3.14.0.tgz
+    dest: /tmp/Python-3.14.0.tgz
+
+- name: Extract Python source
+  unarchive:
+    src: /tmp/Python-3.14.0.tgz
+    dest: /tmp/
+    remote_src: yes
+
+- name: Configure Python 3.14
+  command: ./configure --enable-optimizations --prefix=/usr/local
+  args:
+    chdir: /tmp/Python-3.14.0
+
+- name: Build Python 3.14
+  command:  make -j "{{ ansible_facts['processor_vcpus'] }}"
+  args:
+    chdir: /tmp/Python-3.14.0
+
+- name: Install Python 3.14 (altinstall to avoid overwriting system python)
+  command: make altinstall
+  args:
+    chdir: /tmp/Python-3.14.0
+
+- name: Clean up Python source files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/Python-3.14.0.tgz
+    - /tmp/Python-3.14.0
+
+
+# Install Chrome
+- name: Add Google Chrome yum repository
+  yum_repository:
+    name: google-chrome
+    description: Google Chrome
+    baseurl: https://dl.google.com/linux/chrome/rpm/stable/x86_64
+    gpgcheck: yes
+    gpgkey: https://dl.google.com/linux/linux_signing_key.pub
+    enabled: yes
+
+- name: Install Google Chrome
+  dnf:
+    name: google-chrome-stable
+    state: present
+
+# Install Notepad
+# - name: Install snapd
+#   dnf:
+#     name: snapd
+#     state: present
+
+# - name: Enable and start snapd
+#   systemd:
+#     name: snapd
+#     enabled: yes
+#     state: started
+
+# - name: Create snap symlink
+#   file:
+#     src: /var/lib/snapd/snap
+#     dest: /snap
+#     state: link
+
+# - name: Wait for snapd to be ready
+#   command: snap wait system seed.loaded
+#   changed_when: false
+
+# - name: Install Notepad++ via snap
+#   command: snap install notepad-plus-plus
+#   register: snap_result
+#   changed_when: "'installed' in snap_result.stdout"
+
+
+
+# Install Notepad++ via Wine (since snapd is not available on Amazon Linux 2023)
+# Wine allows running Windows applications on Linux
+
+# Step 1: Install EPEL repository (Wine dependency)
+# - name: Install EPEL repository
+#   dnf:
+#     name: https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+#     state: present
+#     disable_gpg_check: yes
+
+# # Step 2: Install Wine
+# - name: Install Wine and dependencies
+#   dnf:
+#     name:
+#       - wine
+#       - cabextract
+#       - wget
+#     state: present
+
+# # Step 3: Initialize Wine prefix (creates ~/.wine directory)
+# - name: Initialize Wine prefix
+#   command: wineboot --init
+#   environment:
+#     WINEPREFIX: /opt/wine-notepadpp
+#     WINEDLLOVERRIDES: mscoree,mshtml=
+#     DISPLAY: ""
+#   args:
+#     creates: /opt/wine-notepadpp
+
+# # Step 4: Download Notepad++ Windows installer
+# - name: Download Notepad++ installer
+#   get_url:
+#     url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.Installer.x64.exe
+#     dest: /tmp/npp_installer.exe
+#     mode: '0755'
+
+# # Step 5: Install Notepad++ silently using Wine
+# - name: Install Notepad++ via Wine (silent install)
+#   command: wine /tmp/npp_installer.exe /S
+#   environment:
+#     WINEPREFIX: /opt/wine-notepadpp
+#     WINEDLLOVERRIDES: mscoree,mshtml=
+#     DISPLAY: ""
+#   args:
+#     creates: /opt/wine-notepadpp/drive_c/Program Files/Notepad++/notepad++.exe
+
+# # Step 6: Create a wrapper script so you can run 'notepadpp' from terminal
+# - name: Create Notepad++ launcher script
+#   copy:
+#     dest: /usr/local/bin/notepadpp
+#     mode: '0755'
+#     content: |
+#       #!/bin/bash
+#       WINEPREFIX=/opt/wine-notepadpp wine "/opt/wine-notepadpp/drive_c/Program Files/Notepad++/notepad++.exe" "$@"
+
+# # Step 7: Clean up installer
+# - name: Clean up Notepad++ installer
+#   file:
+#     path: /tmp/npp_installer.exe
+#     state: absent
+
+# Download Notepad++ Windows binary (can't run without Wine, but it's "installed")
+- name: Create Notepad++ directory
+  file:
+    path: /opt/notepadpp
+    state: directory
+    mode: '0755'
+
+- name: Download Notepad++ portable version
+  get_url:
+    url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.portable.x64.zip
+    dest: /tmp/notepadpp.zip
+
+- name: Install unzip
+  dnf:
+    name: unzip
+    state: present
+
+- name: Extract Notepad++
+  unarchive:
+    src: /tmp/notepadpp.zip
+    dest: /opt/notepadpp/
+    remote_src: yes
+
+- name: Clean up
+  file:
+    path: /tmp/notepadpp.zip
+    state: absent
+
+- name: Verify Notepad++ files exist
+  command: ls -la /opt/notepadpp/notepad++.exe
+  register: npp_check
+  changed_when: false
+
+- name: Display Notepad++ installation
+  debug:
+    msg: "Notepad++ installed at /opt/notepadpp/notepad++.exe (requires Wine or Windows to run)"

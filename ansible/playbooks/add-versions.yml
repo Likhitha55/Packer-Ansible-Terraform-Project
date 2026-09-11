@@ -1,0 +1,5 @@
+---
+- hosts: instance-from-custom-image
+  become: true
+  roles:
+    - add-versions
