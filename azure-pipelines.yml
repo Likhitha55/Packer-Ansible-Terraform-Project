@@ -150,6 +150,7 @@ stages:
               terraform plan \
                 -var="ami_id=$(AMI_ID)" \
                 -var="key_name=$(KEY_NAME)" \
+
                 -var="subnet_id=$(SUBNET_ID)" \
                 -var="vpc_id=$(VPC_ID)" \
                 -out=tfplan
@@ -164,9 +165,27 @@ stages:
               cd terraform
               terraform apply -auto-approve tfplan
 
-              # Capture outputs for Ansible stage
-              VM_IP=$(terraform output -raw instance_public_ip)
+              sleep 5
+
+              echo "=== All Terraform Outputs ==="
+              terraform output
+
+              VM_IP=$(terraform output -raw instance_public_ip 2>/dev/null)
+
+              if [ -z "$VM_IP" ]; then
+                echo "IP empty, refreshing state..."
+                terraform refresh \
+                  -var="ami_id=$(AMI_ID)" \
+                  -var="subnet_id=$(SUBNET_ID)" \
+                  -var="vpc_id=$(VPC_ID)"
+                VM_IP=$(terraform output -raw instance_public_ip)
+              fi
+
               echo "EC2 Public IP: $VM_IP"
+
+              # # Capture outputs for Ansible stage
+              # VM_IP=$(terraform output -raw instance_public_ip)
+              
               echo "##vso[task.setvariable variable=VM_IP;isOutput=true]$VM_IP"
             name: terraformApply
             displayName: 'Terraform Apply'
@@ -224,14 +243,21 @@ stages:
             displayName: 'Install Ansible'
 
           # Setup SSH key for Ansible to connect to EC2
+          - task: DownloadSecureFile@1
+            name: sshKey
+            displayName: 'Download SSH Key'
+            inputs:
+              secureFile: 'test-key.pem'
+
           - script: |
               mkdir -p ~/.ssh
-              echo "$(SSH_PRIVATE_KEY)" > ~/.ssh/ec2-key.pem
+              cp $(sshKey.secureFilePath) ~/.ssh/ec2-key.pem
               chmod 600 ~/.ssh/ec2-key.pem
 
-              # Add EC2 to known hosts (avoid SSH prompt)
-              sleep 30  # Wait for EC2 to be fully ready
+              # Add EC2 to known hosts
+              sleep 30
               ssh-keyscan -H $(VM_IP) >> ~/.ssh/known_hosts 2>/dev/null
+              echo "SSH key ready"
             displayName: 'Setup SSH Key'
 
           # Create dynamic inventory file
