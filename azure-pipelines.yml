@@ -1,0 +1,286 @@
+# I am running the pipeline when code is pushed to master branch
+# Stages: 3 (Packer Build -> Terraform Deploy -> Ansible Config)
+
+# to trigger the pipeline when I push code to master branch
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - packer/*
+      - terraform/*
+      - ansible/*
+
+# I created variable group and created Access key, Secret Access key, region, and 
+# SSH private key content and my ip in azure pipelines -> library
+
+variables:
+  - group: aws-devops-secrets          # The variable group I created
+  - name: awsRegion
+    value: 'us-east-1'
+  - name: amiName
+    value: 'devops-custom-ami'
+
+# Building with packer
+stages:
+  - stage: PackerBuild
+    displayName: 'Stage 1 - Build Custom AMI'
+    jobs:
+      - job: BuildAMI
+        displayName: 'Packer Build'
+        pool:
+          vmImage: 'ubuntu-latest'      
+        steps:
+
+          # Getting code from GitHub
+          - checkout: self
+            displayName: 'Checkout Code from GitHub'
+
+          # Installing Packer on the pipeline server
+          - script: |
+              curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+              echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+              sudo apt-get update && sudo apt-get install -y packer
+              packer version
+            displayName: 'Install Packer'
+
+          # Installing Ansible 
+          - script: |
+              sudo apt-get install -y ansible
+              ansible --version
+            displayName: 'Install Ansible'
+
+          
+          - script: |
+              cd packer
+              packer init .
+            displayName: 'Packer Init'
+
+          
+          - script: |
+              cd packer
+              packer validate .
+            displayName: 'Packer Validate'
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # Building AMI
+          - script: |
+              cd packer
+              packer build -machine-readable . | tee packer-output.log
+
+            
+              AMI_ID=$(grep 'artifact,0,id' packer-output.log | tail -1 | cut -d: -f2)
+              echo "Built AMI ID: $AMI_ID"
+
+              echo "##vso[task.setvariable variable=AMI_ID;isOutput=true]$AMI_ID"
+            name: packerBuild
+            displayName: 'Packer Build AMI'
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # Save AMI ID as artifact to use in Stage 2
+          - script: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/packer
+              echo "$(packerBuild.AMI_ID)" > $(Build.ArtifactStagingDirectory)/packer/ami-id.txt
+              echo "AMI ID saved: $(packerBuild.AMI_ID)"
+            displayName: 'Save AMI ID'
+
+          - publish: $(Build.ArtifactStagingDirectory)/packer
+            artifact: packer-output
+            displayName: 'Publish AMI ID Artifact'
+
+
+# STAGE 2:- Deploying Infrastructure in AWS with terraform
+
+  - stage: TerraformDeploy
+    displayName: 'Stage 2 - Deploy AWS Infrastructure'
+    dependsOn: PackerBuild # After first stage this should run
+    jobs:
+      - job: Deploy
+        displayName: 'Terraform Apply'
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+          AMI_ID: $[ stageDependencies.PackerBuild.BuildAMI.outputs['packerBuild.AMI_ID'] ]
+        steps:
+
+          # Checkout code
+          - checkout: self
+            displayName: 'Checkout Code'
+
+          # Download AMI ID from Stage 1
+          - download: current
+            artifact: packer-output
+            displayName: 'Download AMI ID from Stage 1'
+
+          # Read AMI ID
+          - script: |
+              AMI_ID=$(cat $(Pipeline.Workspace)/packer-output/ami-id.txt)
+              echo "Using AMI ID: $AMI_ID"
+              echo "##vso[task.setvariable variable=AMI_ID]$AMI_ID"
+            displayName: 'Read AMI ID'
+
+          # Install Terraform
+          - script: |
+              curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+              echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+              sudo apt-get update && sudo apt-get install -y terraform
+              terraform version
+            displayName: 'Install Terraform'
+
+          #Terraform Init
+          - script: |
+              cd terraform
+              terraform init
+            displayName: 'Terraform Init'
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # Terraform Plan
+          - script: |
+              cd terraform
+              terraform plan \
+                -var="ami_id=$(AMI_ID)" \
+                -var='allowed_ips=["$(ALLOWED_IP)"]' \
+                -out=tfplan
+            displayName: 'Terraform Plan'
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # Terraform Apply
+          - script: |
+              cd terraform
+              terraform apply -auto-approve tfplan
+
+              # Capture outputs for Ansible stage
+              VM_IP=$(terraform output -raw instance_public_ip)
+              echo "EC2 Public IP: $VM_IP"
+              echo "##vso[task.setvariable variable=VM_IP;isOutput=true]$VM_IP"
+            name: terraformApply
+            displayName: 'Terraform Apply'
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # Save VM IP for Ansible stage
+          - script: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/terraform
+              echo "$(terraformApply.VM_IP)" > $(Build.ArtifactStagingDirectory)/terraform/vm-ip.txt
+            displayName: 'Save VM IP'
+
+          - publish: $(Build.ArtifactStagingDirectory)/terraform
+            artifact: terraform-output
+            displayName: 'Publish VM IP Artifact'
+
+
+# STAGE 3:- Configuring the EC2 Instance with Ansible
+
+  - stage: AnsibleConfigure
+    displayName: 'Stage 3 - Configure EC2 with Ansible'
+    dependsOn: TerraformDeploy
+    jobs:
+      - job: Configure
+        displayName: 'Run Ansible Playbooks'
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+          VM_IP: $[ stageDependencies.TerraformDeploy.Deploy.outputs['terraformApply.VM_IP'] ]
+        steps:
+
+          # Checkout code
+          - checkout: self
+            displayName: 'Checkout Code'
+
+          # Download VM IP from Stage 2
+          - download: current
+            artifact: terraform-output
+            displayName: 'Download VM IP from Stage 2'
+
+          # Read VM IP
+          - script: |
+              VM_IP=$(cat $(Pipeline.Workspace)/terraform-output/vm-ip.txt)
+              echo "Target EC2 IP: $VM_IP"
+              echo "##vso[task.setvariable variable=VM_IP]$VM_IP"
+            displayName: 'Read VM IP'
+
+          # Install Ansible
+          - script: |
+              sudo apt-get update
+              sudo apt-get install -y ansible
+              ansible --version
+            displayName: 'Install Ansible'
+
+          # Setup SSH key for Ansible to connect to EC2
+          - script: |
+              mkdir -p ~/.ssh
+              echo "$(SSH_PRIVATE_KEY)" > ~/.ssh/ec2-key.pem
+              chmod 600 ~/.ssh/ec2-key.pem
+
+              # Add EC2 to known hosts (avoid SSH prompt)
+              sleep 30  # Wait for EC2 to be fully ready
+              ssh-keyscan -H $(VM_IP) >> ~/.ssh/known_hosts 2>/dev/null
+            displayName: 'Setup SSH Key'
+
+          # Create dynamic inventory file
+          - script: |
+              cat > ansible/inventory.ini << EOF
+              [devops_servers]
+              $(VM_IP) ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/ec2-key.pem
+              EOF
+
+              echo "=== Inventory File ==="
+              cat ansible/inventory.ini
+            displayName: 'Create Ansible Inventory'
+
+          # Test SSH connection
+          - script: |
+              ansible -i ansible/inventory.ini devops_servers -m ping
+            displayName: 'Test Ansible Connection'
+
+          # Run Playbook — Check Software Versions
+          - script: |
+              cd ansible
+              ansible-playbook -i inventory.ini playbooks/add-versions.yml -v
+            displayName: 'Run add-versions Playbook'
+
+          # Run Playbook — Mount Volume
+          - script: |
+              cd ansible
+              ansible-playbook -i inventory.ini playbooks/mount-volume.yml -v
+            displayName: 'Run mount-volume Playbook'
+
+          #Final Verification
+          - script: |
+              echo "============================================"
+              echo "  DEPLOYMENT VERIFICATION"
+              echo "============================================"
+              ssh -i ~/.ssh/ec2-key.pem -o StrictHostKeyChecking=no ec2-user@$(VM_IP) << 'VERIFY'
+              echo ""
+              echo "=== Software Versions ==="
+              java -version 2>&1 | head -1
+              jenkins --version 2>&1
+              python3.14 --version 2>&1
+              subl --version 2>&1
+              google-chrome --version 2>&1
+              echo ""
+              echo "=== Mounted Volumes ==="
+              df -h | grep /mnt/data
+              echo ""
+              echo "=== Version Report ==="
+              cat /opt/version-report/versions.txt 2>/dev/null
+              echo ""
+              echo "ALL CHECKS COMPLETE"
+              VERIFY
+            displayName: 'Final Verification'
+
