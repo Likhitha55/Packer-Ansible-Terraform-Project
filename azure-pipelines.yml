@@ -334,7 +334,7 @@ stages:
           # Create dynamic inventory file
           - script: |
               cat > ansible/inventory.ini << EOF
-              [devops_servers]
+              [instance-from-custom-image]
               $(VM_IP) ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/ec2-key.pem
               EOF
 
