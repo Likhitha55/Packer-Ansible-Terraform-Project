@@ -5,6 +5,7 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+# Shld pass from terminal
 variable "ami_id" {
   description = "AMI ID built by Packer"
   type        = string
@@ -18,6 +19,7 @@ variable "instance_type" {
 variable "key_name" {
   description = "SSH key pair name"
   type        = string
+  default     = "test-key"
 }
 
 variable "subnet_id" {
