@@ -147,51 +147,108 @@ stages:
           # Terraform Plan
           - script: |
               cd terraform
+
+              echo "=== Terraform Plan ==="
               terraform plan \
                 -var="ami_id=$(AMI_ID)" \
-                -var="key_name=$(KEY_NAME)" \
                 -var="subnet_id=$(SUBNET_ID)" \
                 -var="vpc_id=$(VPC_ID)" \
                 -out=tfplan
-            displayName: 'Terraform Plan'
-            env:
-              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-              AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-          # Terraform Apply
-          - script: |
-              cd terraform
+              echo "=== Terraform Apply ==="
               terraform apply -auto-approve tfplan
 
-              sleep 5
+              echo "=== Wait for state ==="
+              sleep 20
 
-              echo "=== All Terraform Outputs ==="
+              echo "=== Terraform State List ==="
+              terraform state list
+
+              echo "=== Terraform Outputs ==="
               terraform output
 
+              echo "=== Capture IP ==="
               VM_IP=$(terraform output -raw instance_public_ip 2>/dev/null)
 
+              # Fallback: Get IP directly from AWS if terraform output fails
               if [ -z "$VM_IP" ]; then
-                echo "IP empty, refreshing state..."
-                terraform refresh \
-                  -var="ami_id=$(AMI_ID)" \
-                  -var="subnet_id=$(SUBNET_ID)" \
-                  -var="vpc_id=$(VPC_ID)"
-                VM_IP=$(terraform output -raw instance_public_ip)
+                echo "Terraform output empty, fetching from AWS directly..."
+                INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null)
+                if [ -z "$INSTANCE_ID" ]; then
+                  echo "Getting instance ID from AWS..."
+                  INSTANCE_ID=$(aws ec2 describe-instances \
+                    --filters "Name=tag:Name,Values=custom-image-instance" \
+                              "Name=instance-state-name,Values=running" \
+                    --query "Reservations.Instances.InstanceId" \
+                    --output text)
+                fi
+                VM_IP=$(aws ec2 describe-instances \
+                  --instance-ids $INSTANCE_ID \
+                  --query "Reservations.Instances.PublicIpAddress" \
+                  --output text)
               fi
-
               echo "EC2 Public IP: $VM_IP"
-
-              # # Capture outputs for Ansible stage
-              # VM_IP=$(terraform output -raw instance_public_ip)
-              
               echo "##vso[task.setvariable variable=VM_IP;isOutput=true]$VM_IP"
             name: terraformApply
-            displayName: 'Terraform Apply'
+            displayName: 'Terraform Plan + Apply'
             env:
               AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
               AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
               AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+
+
+
+
+
+
+          # - script: |
+          #     cd terraform
+          #     terraform plan \
+          #       -var="ami_id=$(AMI_ID)" \
+          #       -var="key_name=$(KEY_NAME)" \
+          #       -var="subnet_id=$(SUBNET_ID)" \
+          #       -var="vpc_id=$(VPC_ID)" \
+          #       -out=tfplan
+          #   displayName: 'Terraform Plan'
+          #   env:
+          #     AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+          #     AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+          #     AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
+
+          # # Terraform Apply
+          # - script: |
+          #     cd terraform
+          #     terraform apply -auto-approve tfplan
+
+          #     sleep 5
+
+          #     echo "=== All Terraform Outputs ==="
+          #     terraform output
+
+          #     VM_IP=$(terraform output -raw instance_public_ip 2>/dev/null)
+
+          #     if [ -z "$VM_IP" ]; then
+          #       echo "IP empty, refreshing state..."
+          #       terraform refresh \
+          #         -var="ami_id=$(AMI_ID)" \
+          #         -var="subnet_id=$(SUBNET_ID)" \
+          #         -var="vpc_id=$(VPC_ID)"
+          #       VM_IP=$(terraform output -raw instance_public_ip)
+          #     fi
+
+          #     echo "EC2 Public IP: $VM_IP"
+
+          #     # # Capture outputs for Ansible stage
+          #     # VM_IP=$(terraform output -raw instance_public_ip)
+              
+          #     echo "##vso[task.setvariable variable=VM_IP;isOutput=true]$VM_IP"
+          #   name: terraformApply
+          #   displayName: 'Terraform Apply'
+          #   env:
+          #     AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+          #     AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+          #     AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
           # Save VM IP for Ansible stage
           - script: |
