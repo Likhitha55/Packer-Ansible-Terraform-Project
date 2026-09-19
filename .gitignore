@@ -1,0 +1,18 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+terraform.tfvars
+
+# Packer
+packer-manifest.json
+*.log
+
+# SSH Keys
+*.pem
+*.pub
+
+# OS files
+.DS_Store
