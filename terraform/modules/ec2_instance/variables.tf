@@ -68,4 +68,5 @@ variable "ssh_user_name" {
   type        = string
   default     = "ec2_user"  
 }
+# Triggering pipeline
 
