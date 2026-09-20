@@ -29,8 +29,10 @@ stages:
     jobs:
       - job: BuildAMI
         displayName: 'Packer Build'
+        # pool:
+        #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'ubuntu-latest'      
+          vmImage: 'aws-ec2-pool'      
         steps:
 
           # Getting code from GitHub
@@ -104,8 +106,10 @@ stages:
     jobs:
       - job: Deploy
         displayName: 'Terraform Apply'
+        # pool:
+        #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'ubuntu-latest'
+          vmImage: 'aws-ec2-pool'
         variables:
           AMI_ID: $[ stageDependencies.PackerBuild.BuildAMI.outputs['packerBuild.AMI_ID'] ]
         steps:
@@ -270,8 +274,10 @@ stages:
     jobs:
       - job: Configure
         displayName: 'Run Ansible Playbooks'
+        # pool:
+        #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'ubuntu-latest'
+          vmImage: 'aws-ec2-pool'
         variables:
           VM_IP: $[ stageDependencies.TerraformDeploy.Deploy.outputs['terraformApply.VM_IP'] ]
         steps:

@@ -51,4 +51,3 @@ variable "allowed_ssh_cidrs" {
   default = ["0.0.0.0/0"]
 }
 
-# Triggering pipeline
