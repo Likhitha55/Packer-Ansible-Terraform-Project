@@ -32,7 +32,7 @@ stages:
         # pool:
         #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'aws-ec2-pool'      
+          name: 'aws-ec2-pool'      
         steps:
 
           # Getting code from GitHub
@@ -109,7 +109,7 @@ stages:
         # pool:
         #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'aws-ec2-pool'
+          name: 'aws-ec2-pool'
         variables:
           AMI_ID: $[ stageDependencies.PackerBuild.BuildAMI.outputs['packerBuild.AMI_ID'] ]
         steps:
@@ -277,7 +277,7 @@ stages:
         # pool:
         #   vmImage: 'ubuntu-latest'
         pool:
-          vmImage: 'aws-ec2-pool'
+          name: 'aws-ec2-pool'
         variables:
           VM_IP: $[ stageDependencies.TerraformDeploy.Deploy.outputs['terraformApply.VM_IP'] ]
         steps:
